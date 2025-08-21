@@ -1,0 +1,177 @@
+---
+- name: Install and Configure XRootD Client with EGI Trust Anchors and VOMS
+  hosts: all
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - wget
+          - curl
+          - gnupg
+          - ca-certificates
+          - openssl
+        state: present
+
+    - name: Add XRootD repository key
+      apt_key:
+        url: https://xrootd.web.cern.ch/repo/RPM-GPG-KEY.txt
+        state: present
+
+    - name: Add XRootD repository
+      apt_repository:
+        repo: "deb https://xrootd.slac.stanford.edu/binaries/xrootd-stable-deb {{ ansible_distribution_release }} main"
+        state: present
+        update_cache: yes
+
+    - name: Install XRootD client
+      apt:
+        name:
+          - xrootd-client
+          - xrootd-client-plugins
+        state: present
+
+    - name: Create grid security directory
+      file:
+        path: /etc/grid-security
+        state: directory
+        mode: '0755'
+
+    - name: Create certificates directory
+      file:
+        path: /etc/grid-security/certificates
+        state: directory
+        mode: '0755'
+
+    - name: Download EGI trust anchors repository key
+      get_url:
+        url: https://repository.egi.eu/sw/production/cas/1/GPG-KEY-EUGridPMA-RPM-3
+        dest: /tmp/GPG-KEY-EUGridPMA-RPM-3
+
+    - name: Add EGI trust anchors key
+      apt_key:
+        file: /tmp/GPG-KEY-EUGridPMA-RPM-3
+        state: present
+
+    - name: Add EGI trust anchors repository
+      apt_repository:
+        repo: "deb https://repository.egi.eu/sw/production/cas/1/current egi-igtf"
+        state: present
+        update_cache: yes
+
+    - name: Install EGI trust anchors
+      apt:
+        name:
+          - ca-policy-egi-core
+        state: present
+
+    - name: Install fetch-crl
+      apt:
+        name: fetch-crl
+        state: present
+
+    - name: Install VOMS client
+      apt:
+        name:
+          - voms-clients
+          - voms-clients-java
+        state: present
+
+    - name: Create VOMS directory
+      file:
+        path: /etc/voms
+        state: directory
+        mode: '0755'
+
+    - name: Create VOMS config directory
+      file:
+        path: /etc/vomses
+        state: directory
+        mode: '0755'
+
+    - name: Download VOMS configuration files
+      get_url:
+        url: "{{ item.url }}"
+        dest: "{{ item.dest }}"
+        mode: '0644'
+      loop:
+        - url: https://raw.githubusercontent.com/WLCG-AuthZ-WG/wlcg-voms-config/master/vomses/cms-voms.cern.ch
+          dest: /etc/vomses/cms-voms.cern.ch
+        - url: https://raw.githubusercontent.com/WLCG-AuthZ-WG/wlcg-voms-config/master/vomses/atlas-voms.cern.ch
+          dest: /etc/vomses/atlas-voms.cern.ch
+        - url: https://raw.githubusercontent.com/WLCG-AuthZ-WG/wlcg-voms-config/master/vomses/alice-voms.cern.ch
+          dest: /etc/vomses/alice-voms.cern.ch
+        - url: https://raw.githubusercontent.com/WLCG-AuthZ-WG/wlcg-voms-config/master/vomses/lhcb-voms.cern.ch
+          dest: /etc/vomses/lhcb-voms.cern.ch
+      failed_when: false
+
+    - name: Run initial CRL fetch
+      command: fetch-crl
+      register: fetch_crl_result
+      changed_when: false
+      failed_when: false
+
+    - name: Display CRL fetch result
+      debug:
+        var: fetch_crl_result.stdout_lines
+
+    - name: Setup fetch-crl cron job
+      cron:
+        name: "Fetch CRL updates"
+        minute: "0"
+        hour: "*/6"
+        job: "/usr/sbin/fetch-crl -q"
+        user: root
+
+    - name: Test XRootD client installation
+      command: xrdcp --version
+      register: xrootd_version
+      changed_when: false
+
+    - name: Display XRootD version
+      debug:
+        var: xrootd_version.stdout_lines
+
+    - name: Test VOMS client installation
+      command: voms-proxy-info --version
+      register: voms_version
+      changed_when: false
+
+    - name: Display VOMS version
+      debug:
+        var: voms_version.stdout_lines
+
+    - name: Create XRootD client config
+      copy:
+        content: |
+          # XRootD client configuration
+          xrd.timeout 30
+          xrd.network keepalive
+        dest: /etc/xrootd/client.conf
+        backup: yes
+
+    - name: Test grid certificate directory
+      stat:
+        path: /etc/grid-security/certificates
+      register: cert_dir
+
+    - name: Display certificate directory status
+      debug:
+        msg: "Grid certificates directory exists and contains {{ (cert_dir.stat.exists and cert_dir.stat.isdir) | ternary('certificates', 'no certificates') }}"
+
+    - name: Display VOMS setup information
+      debug:
+        msg: |
+          VOMS client installed successfully!
+          
+          To use VOMS proxies, users need to:
+          1. Install their grid certificate in ~/.globus/
+          2. Run: voms-proxy-init --voms <experiment>
+          
+          Available experiments: cms, atlas, alice, lhcb

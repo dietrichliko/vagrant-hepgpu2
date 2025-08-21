@@ -1,0 +1,76 @@
+---
+- name: Install and Configure CVMFS
+  hosts: all
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required packages
+      apt:
+        name:
+          - wget
+          - curl
+          - gnupg
+        state: present
+
+    - name: Install CVMFS repository
+      apt:
+        deb: https://ecsft.cern.ch/dist/cvmfs/cvmfs-release/cvmfs-release-latest_all.deb
+        state: present
+
+    - name: Update apt cache after adding CVMFS repo
+      apt:
+        update_cache: yes
+
+    - name: Install CVMFS client
+      apt:
+        name:
+          - cvmfs
+          - cvmfs-config-default
+        state: present
+      register: cvmfs_install_result
+
+    - name: Create CVMFS configuration directory
+      file:
+        path: /etc/cvmfs
+        state: directory
+        mode: '0755'
+
+    - name: Configure CVMFS default settings
+      copy:
+        content: |
+          CVMFS_REPOSITORIES=cms.cern.ch,belle.cern.ch
+          CVMFS_HTTP_PROXY=DIRECT
+          CVMFS_QUOTA_LIMIT=4000
+          CVMFS_CACHE_BASE=/var/lib/cvmfs
+        dest: /etc/cvmfs/default.local
+        backup: yes
+
+    - name: Run CVMFS config setup if newly installed
+      command: cvmfs_config setup
+      when: cvmfs_install_result.changed
+      register: cvmfs_setup_result
+
+    - name: Display CVMFS setup result
+      debug:
+        var: cvmfs_setup_result.stdout_lines
+      when: cvmfs_install_result.changed
+
+    - name: Start and enable autofs service
+      systemd:
+        name: autofs
+        state: started
+        enabled: yes
+
+    - name: Test CVMFS mount
+      command: cvmfs_config probe
+      register: cvmfs_probe_result
+      changed_when: false
+
+    - name: Display CVMFS probe result
+      debug:
+        var: cvmfs_probe_result.stdout_lines

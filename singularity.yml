@@ -1,0 +1,89 @@
+---
+- name: Install and Configure Apptainer/Singularity
+  hosts: all
+  gather_facts: yes
+  become: yes
+  tasks:
+    - name: Update apt cache
+      apt:
+        update_cache: yes
+        cache_valid_time: 3600
+
+    - name: Install required dependencies
+      apt:
+        name:
+          - software-properties-common
+          - python3-debian
+        state: present
+
+    - name: Add Apptainer PPA using deb822 format
+      deb822_repository:
+        name: apptainer
+        types: [deb]
+        uris: https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu
+        suites: ["{{ ansible_distribution_release }}"]
+        components: [main]
+        signed_by: /usr/share/keyrings/apptainer-ppa-keyring.gpg
+        state: present
+        enabled: yes
+
+    - name: Download Apptainer PPA key
+      get_url:
+        url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x8b93c13b8bb16938
+        dest: /usr/share/keyrings/apptainer-ppa-keyring.gpg
+        mode: '0644'
+
+    - name: Update apt cache after adding Apptainer repository
+      apt:
+        update_cache: yes
+
+    - name: Install Apptainer
+      apt:
+        name: apptainer
+        state: present
+
+    - name: Create apptainer config directory
+      file:
+        path: /etc/apptainer
+        state: directory
+        mode: '0755'
+
+    - name: Configure apptainer for HEP usage
+      copy:
+        content: |
+          # Allow bind mounts for common HEP directories
+          bind path = /cvmfs
+          bind path = /tmp
+          bind path = /var/tmp
+          bind path = /opt
+          # Enable overlay support
+          enable overlay = yes
+          # Set cache directory
+          cachedir = /var/cache/apptainer
+        dest: /etc/apptainer/apptainer.conf
+        backup: yes
+
+    - name: Create apptainer cache directory
+      file:
+        path: /var/cache/apptainer
+        state: directory
+        mode: '0755'
+
+    - name: Test apptainer installation
+      command: apptainer version
+      register: apptainer_version
+      changed_when: false
+
+    - name: Display Apptainer version
+      debug:
+        var: apptainer_version.stdout_lines
+
+    - name: Test basic container functionality
+      command: apptainer exec docker://alpine:latest echo "Apptainer is working!"
+      register: apptainer_test
+      changed_when: false
+      failed_when: false
+
+    - name: Display test result
+      debug:
+        msg: "{{ 'Apptainer test successful' if apptainer_test.rc == 0 else 'Apptainer test failed' }}"
