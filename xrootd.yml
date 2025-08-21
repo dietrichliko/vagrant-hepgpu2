@@ -17,17 +17,27 @@
           - gnupg
           - ca-certificates
           - openssl
+          - python3-debian
         state: present
 
-    - name: Add XRootD repository key
-      apt_key:
+    - name: Download XRootD repository key (ASCII format)
+      get_url:
         url: https://xrootd.web.cern.ch/repo/RPM-GPG-KEY.txt
+        dest: /etc/apt/trusted.gpg.d/xrootd.asc
+        mode: '0644'
+
+    - name: Add XRootD repository using deb822 format
+      deb822_repository:
+        name: xrootd
+        types: [deb]
+        uris: "https://xrootd.web.cern.ch/{{ 'debian' if ansible_distribution == 'Debian' else 'ubuntu' }}"
+        suites: ["{{ ansible_distribution_release }}"]
+        components: [stable]
+        signed_by: /etc/apt/trusted.gpg.d/xrootd.asc
         state: present
 
-    - name: Add XRootD repository
-      apt_repository:
-        repo: "deb https://xrootd.slac.stanford.edu/binaries/xrootd-stable-deb {{ ansible_distribution_release }} main"
-        state: present
+    - name: Update apt cache after adding XRootD repository
+      apt:
         update_cache: yes
 
     - name: Install XRootD client
@@ -49,40 +59,56 @@
         state: directory
         mode: '0755'
 
-    - name: Download EGI trust anchors repository key
-      get_url:
-        url: https://repository.egi.eu/sw/production/cas/1/GPG-KEY-EUGridPMA-RPM-3
-        dest: /tmp/GPG-KEY-EUGridPMA-RPM-3
-
-    - name: Add EGI trust anchors key
-      apt_key:
-        file: /tmp/GPG-KEY-EUGridPMA-RPM-3
-        state: present
-
-    - name: Add EGI trust anchors repository
-      apt_repository:
-        repo: "deb https://repository.egi.eu/sw/production/cas/1/current egi-igtf"
-        state: present
-        update_cache: yes
-
-    - name: Install EGI trust anchors
+    # Replace EGI repository with direct CA installation
+    - name: Install build dependencies for CA installation
       apt:
         name:
-          - ca-policy-egi-core
+          - wget
+          - tar
+          - make
         state: present
 
-    - name: Install fetch-crl
+    - name: Download IGTF CA certificates bundle
+      get_url:
+        url: "https://dist.eugridpma.info/distribution/igtf/current/accredited/igtf-preinstalled-bundle-classic-1.136.tar.gz"
+        dest: /tmp/igtf-policy-bundle.tar.gz
+        timeout: 60
+
+    - name: Extract IGTF CA bundle
+      unarchive:
+        src: /tmp/igtf-policy-bundle.tar.gz
+        dest: /tmp/
+        remote_src: yes
+        creates: /tmp/igtf-policy-installation-bundle-1.136
+
+    - name: Configure and install CA certificates
+      shell: |
+        cd /tmp/igtf-policy-installation-bundle-*
+        ./configure --prefix=/etc/grid-security --with-ca-dir=/etc/grid-security/certificates
+        make install
+      args:
+        creates: /etc/grid-security/certificates/policy-igtf-classic
+
+    - name: Set proper permissions on certificates directory
+      file:
+        path: /etc/grid-security/certificates
+        state: directory
+        mode: '0755'
+        recurse: yes
+
+    - name: Install fetch-crl from Ubuntu repositories
       apt:
         name: fetch-crl
         state: present
 
-    - name: Install VOMS client
+    - name: Install VOMS client from Ubuntu repositories
       apt:
         name:
           - voms-clients
           - voms-clients-java
         state: present
 
+    # Remove the problematic EGI repository tasks and continue with existing VOMS setup
     - name: Create VOMS directory
       file:
         path: /etc/voms
@@ -117,10 +143,6 @@
       changed_when: false
       failed_when: false
 
-    - name: Display CRL fetch result
-      debug:
-        var: fetch_crl_result.stdout_lines
-
     - name: Setup fetch-crl cron job
       cron:
         name: "Fetch CRL updates"
@@ -128,6 +150,21 @@
         hour: "*/6"
         job: "/usr/sbin/fetch-crl -q"
         user: root
+
+    - name: Create XRootD config directory
+      file:
+        path: /etc/xrootd
+        state: directory
+        mode: '0755'
+
+    - name: Create XRootD client config
+      copy:
+        content: |
+          # XRootD client configuration
+          xrd.timeout 30
+          xrd.network keepalive
+        dest: /etc/xrootd/client.conf
+        backup: yes
 
     - name: Test XRootD client installation
       command: xrdcp --version
@@ -146,15 +183,6 @@
     - name: Display VOMS version
       debug:
         var: voms_version.stdout_lines
-
-    - name: Create XRootD client config
-      copy:
-        content: |
-          # XRootD client configuration
-          xrd.timeout 30
-          xrd.network keepalive
-        dest: /etc/xrootd/client.conf
-        backup: yes
 
     - name: Test grid certificate directory
       stat:

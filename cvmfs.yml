@@ -45,6 +45,7 @@
         content: |
           CVMFS_REPOSITORIES=cms.cern.ch,belle.cern.ch
           CVMFS_HTTP_PROXY=DIRECT
+          # CVMFS_HTTP_PROXY="http://frontiersquid..grid.vbc.ac.at:3128"
           CVMFS_QUOTA_LIMIT=4000
           CVMFS_CACHE_BASE=/var/lib/cvmfs
         dest: /etc/cvmfs/default.local

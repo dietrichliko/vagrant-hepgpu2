@@ -14,24 +14,31 @@
         name:
           - software-properties-common
           - python3-debian
+          - gnupg
         state: present
 
-    - name: Add Apptainer PPA using deb822 format
+    - name: Download Apptainer PPA key (ASCII format)
+      get_url:
+        url: "https://keyserver.ubuntu.com/pks/lookup?op=get&search=0xAFE36534FC6218AE"
+        dest: /tmp/apptainer-ppa-key.asc
+        mode: '0644'
+
+    - name: Convert and add Apptainer PPA key to keyring
+      shell: |
+        gpg --dearmor < /tmp/apptainer-ppa-key.asc > /usr/share/keyrings/apptainer-ppa-keyring.gpg
+        chmod 644 /usr/share/keyrings/apptainer-ppa-keyring.gpg
+      args:
+        creates: /usr/share/keyrings/apptainer-ppa-keyring.gpg
+
+    - name: Add Apptainer PPA in deb822 format
       deb822_repository:
-        name: apptainer
-        types: [deb]
-        uris: https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu
-        suites: ["{{ ansible_distribution_release }}"]
-        components: [main]
+        name: "ppa-apptainer"
+        types: ["deb"]
+        uris: "https://ppa.launchpadcontent.net/apptainer/ppa/ubuntu"
+        suites: "{{ ansible_distribution_release }}"
+        components: ["main"]
         signed_by: /usr/share/keyrings/apptainer-ppa-keyring.gpg
         state: present
-        enabled: yes
-
-    - name: Download Apptainer PPA key
-      get_url:
-        url: https://keyserver.ubuntu.com/pks/lookup?op=get&search=0x8b93c13b8bb16938
-        dest: /usr/share/keyrings/apptainer-ppa-keyring.gpg
-        mode: '0644'
 
     - name: Update apt cache after adding Apptainer repository
       apt:
